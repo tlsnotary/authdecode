@@ -279,13 +279,9 @@ mod tests {
 
                 let start = std::time::Instant::now();
                 let proof = prove_subslice(domain, &ck, chal, &pt, &pt_com, slice.clone());
-                let diff = start.elapsed();
+                let proof_time = start.elapsed().as_millis();
 
-                println!(
-                    "Proof for opening {slice_size}/2^{log_pt_bytelen} elems: {}ms",
-                    diff.as_millis()
-                );
-
+                let start = std::time::Instant::now();
                 let verif = check_subslice_proof(
                     &mut rng,
                     domain,
@@ -296,7 +292,13 @@ mod tests {
                     pt_vals.clone(),
                     slice.clone(),
                 );
+                let verif_time = start.elapsed().as_millis();
                 assert!(verif);
+
+                println!(
+                    "Opening {slice_size}/2^{log_pt_bytelen} elems: \
+                    {proof_time}ms / {verif_time}ms (proof/verif)",
+                );
             }
         }
     }
