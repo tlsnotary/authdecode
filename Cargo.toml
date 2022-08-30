@@ -10,6 +10,7 @@ ark-ff = "0.3"
 ark-poly = "0.3"
 ark-poly-commit = "0.3"
 commitment_dlog = { git = "https://github.com/o1-labs/proof-systems.git", rev = "c803ba53108b6081e920022a547f3069e07f7dc3" }
+num-traits = "0.2"
 rand_core = "0.6"
 
 [dev-dependencies]
