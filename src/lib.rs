@@ -9,6 +9,8 @@ use ark_poly_commit::{LabeledCommitment, LabeledPolynomial, PolynomialCommitment
 use num_traits::identities::Zero;
 use rand_core::{CryptoRng, RngCore};
 
+mod r_decode;
+
 const PT_LABEL: &str = "PT";
 const QUOTIENT_LABEL: &str = "q";
 const BINARY_CHAL_LABEL: &str = "binchal";
@@ -43,16 +45,32 @@ impl<F: FftField> Plaintext<F> {
     }
 }
 
+pub(crate) struct BinarynessProof<F, PC>
+where
+    F: FftField,
+    PC: PolynomialCommitment<F, DensePolynomial<F>>,
+{
+    /// The proof of correct evaluation of `pt_chal_eval` and `quotient_chal_eval`
+    eval_proof: PC::BatchProof,
+    /// The point `q(c)` for some challenge point `c`, where `q` is the "quotient polynomial"
+    /// define in the protocol
+    quotient_com: LabeledCommitment<PC::Commitment>,
+    /// The point `p(c)` for some challenge point `c`
+    pt_chal_eval: F,
+    /// The point `q(c)` for some challenge point `c`
+    quotient_chal_eval: F,
+}
+
 /// Proves that the given plaintext `pt_polyn` has only binary coefficients. `chal` is the
 /// challenge point given by the verifier.
-pub fn prove_binary<D, F, PC, R>(
+pub(crate) fn prove_binary<D, F, PC, R>(
     mut rng: R,
     domain: D,
     ck: &PC::CommitterKey,
     chal: F,
     pt_polyn: &DensePolynomial<F>,
     pt_com: &PtCom<F, PC>,
-) -> (PC::BatchProof, LabeledCommitment<PC::Commitment>, F, F)
+) -> BinarynessProof<F, PC>
 where
     D: EvaluationDomain<F>,
     F: FftField,
@@ -117,22 +135,24 @@ where
     )
     .unwrap();
 
-    (batch_proof, q_com, pc, qc)
+    BinarynessProof {
+        eval_proof: batch_proof,
+        quotient_com: q_com,
+        pt_chal_eval: pc,
+        quotient_chal_eval: qc,
+    }
 }
 
 /// Verifies that the plaintext committed to by `pt_com` has only binary coefficients. `chal` is
 /// the challenge point given by the verifier. `q`, `pc`, and `qc` are all given by the prover.
-pub fn verif_binary<D, F, PC, R>(
+pub(crate) fn verif_binary<D, F, PC, R>(
     mut rng: R,
     domain: D,
     deg: usize,
     vk: &PC::VerifierKey,
-    proof: &PC::BatchProof,
     chal: F,
     pt_com: &PtCom<F, PC>,
-    q_com: &LabeledCommitment<PC::Commitment>,
-    qc: F,
-    pc: F,
+    proof: &BinarynessProof<F, PC>,
 ) -> bool
 where
     D: EvaluationDomain<F>,
@@ -140,6 +160,14 @@ where
     PC: PolynomialCommitment<F, DensePolynomial<F>>,
     R: RngCore + CryptoRng,
 {
+    // Destructure the proof
+    let BinarynessProof {
+        eval_proof,
+        quotient_com,
+        pt_chal_eval,
+        quotient_chal_eval,
+    } = proof;
+
     // TODO: Make this a a real challenge point
     let c = F::from(1337u16);
 
@@ -159,8 +187,8 @@ where
 
     // A map from the challenge point c to the evaluated points p(c) and q(c)
     let evals: BTreeMap<(String, F), F> = [
-        ((PT_LABEL.to_string(), c), pc),
-        ((QUOTIENT_LABEL.to_string(), c), qc),
+        ((PT_LABEL.to_string(), c), *pt_chal_eval),
+        ((QUOTIENT_LABEL.to_string(), c), *quotient_chal_eval),
     ]
     .into_iter()
     .collect();
@@ -168,10 +196,10 @@ where
     // Check that pc and qc are the correct evaluations
     let mut res = PC::batch_check(
         &vk,
-        &[pt_labeled_com, q_com.clone()],
+        &[pt_labeled_com, quotient_com.clone()],
         &query_set,
         &evals,
-        proof,
+        eval_proof,
         chal,
         &mut rng,
     )
@@ -185,7 +213,7 @@ where
     let vc = domain.evaluate_vanishing_polynomial(c);
 
     // Check that vc · qc == pc · (pc - 1c). This proves that p is binary
-    res &= vc * qc == pc * (pc - oc);
+    res &= vc * quotient_chal_eval == *pt_chal_eval * (*pt_chal_eval - oc);
 
     res
 }
@@ -287,10 +315,7 @@ mod tests {
     use rand::Rng;
 
     use ark_bls12_381::{Bls12_381 as E, Fr as F};
-    use ark_ec::PairingEngine;
-    use ark_poly_commit::{
-        ipa_pc::InnerProductArgPC, marlin::marlin_pc::MarlinKZG10, sonic_pc::SonicKZG10,
-    };
+    use ark_poly_commit::marlin::marlin_pc::MarlinKZG10;
 
     // Some alternate polynomial commitment schemes
     //use ark_vesta::{Affine as G, Fr as F};
@@ -336,7 +361,7 @@ mod tests {
 
         // Compute an proof of binaryness and time it
         let start = std::time::Instant::now();
-        let (batch_proof, q_com, pc, qc) =
+        let binaryness_proof =
             prove_binary::<_, _, PC, _>(&mut rng, domain, &ck, chal, &pt_polyn, &pt_com);
         let proof_time = start.elapsed().as_millis();
         println!("Proving R_binary on 2^{log_pt_bitlen} bits: {proof_time}ms");
@@ -347,12 +372,9 @@ mod tests {
             domain,
             pt_bitlen,
             &vk,
-            &batch_proof,
             chal,
             &pt_com,
-            &q_com,
-            qc,
-            pc
+            &binaryness_proof,
         ));
     }
 
