@@ -1,10 +1,14 @@
-use crate::{prove_binary, BinarynessProof, PtCom};
+use crate::{
+    r_binary::{prove_binary, BinarynessProof},
+    PtCom,
+};
 
 use ark_ff::FftField;
 use ark_poly::{polynomial::univariate::DensePolynomial, EvaluationDomain, Polynomial};
 use ark_poly_commit::{LabeledCommitment, LabeledPolynomial, PolynomialCommitment};
 use rand_core::{CryptoRng, RngCore};
 
+// String to identify the zero-labels polynomial
 const ZEROLABELS_LABEL: &str = "W₀";
 
 pub struct ActiveLabelsCom<F, PC>
@@ -21,8 +25,11 @@ where
     F: FftField,
     PC: PolynomialCommitment<F, DensePolynomial<F>>,
 {
+    /// The point `W₀(c)` for some challenge point `c`, where W₀ is the zero-labels polyn
     zero_labels_eval: F,
+    /// The proof that `W₀(c)` was evaluated correctly
     zero_labels_eval_proof: PC::Proof,
+    /// We call down to R_binary in R_decode. This is that proof
     binaryness_proof: BinarynessProof<F, PC>,
 }
 
